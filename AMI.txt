@@ -1,0 +1,304 @@
+Hadoop MapReduce setup - Fully-Distributed mode(4 Instances):
+
+Setup:
+
+#namenode_public_dns  : MasterNode - ec2-18-218-30-189.us-east-2.compute.amazonaws.com - 172.31.10.164
+#datanode1_public_dns : DataNode1 - ec2-18-219-212-254.us-east-2.compute.amazonaws.com - 172.31.29.224
+#datanode2_public_dns : DataNode2 - ec2-18-224-56-97.us-east-2.compute.amazonaws.com - 172.31.9.50
+#datanode3_public_dns : Datanode3 - ec2-18-224-0-202.us-east-2.compute.amazonaws.com - 172.31.34.53
+
+Change the permission of the key:
+
+local$ sudo chmod 600 ~/.ssh/AMI_Master.pem
+
+Now ssh into the namenode using the key:
+
+local$ ssh -i ~/ec2-user/AMI-Master.pem ec2-18-219-212-254.us-east-2.compute.amazonaws.com
+
+SSH Configuration for passwordless login (path : cd /etc/ssh and then sudo vi ssh_config)
+    
+	Host Masternode
+    HostName ec2-18-218-30-189.us-east-2.compute.amazonaws.com
+    User ec2-user
+    IdentityFile ~/.ssh/AMI_Master.pem
+
+    Host Datanode1
+    HostName ec2-18-219-212-254.us-east-2.compute.amazonaws.com
+    User ec2-user
+    IdentityFile ~/.ssh/AMI_Master.pem
+    
+    Host Datanode2
+    HostName ec2-18-224-56-97.us-east-2.compute.amazonaws.com
+    User ec2-user
+    IdentityFile ~/.ssh/AMI_Master.pem
+
+    Host Datanode3
+    HostName ec2-18-224-0-202.us-east-2.compute.amazonaws.com
+    User ec2-user
+    IdentityFile ~/.ssh/AMI_Master.pem
+	
+Transfer .pem key from local computer to the namenode:
+
+namenode$ scp ~/.ssh/AMI_Master.pem ~/.ssh/config namenode:~/.ssh
+
+Copy AMI_Master.pem and config to all data nodes:
+
+namenode$ scp ~/.ssh/AMI_Master.pem ~/.ssh/config Datanode1:~/.ssh
+namenode$ scp ~/.ssh/AMI_Master.pem ~/.ssh/config Datanode2:~/.ssh
+namenode$ scp ~/.ssh/AMI_Master.pem ~/.ssh/config Datanode3:~/.ssh
+
+Connect to namenode by the following command:
+
+namenode$ ssh namenode
+
+namenode$ ssh-keygen -f ~/.ssh/id_rsa -t rsa -P ""
+
+namenode$ cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+
+Now we need to copy the public fingerprint to each DataNode’s~/.ssh/authorized_keys. This should enable the password-less SSH capabilities from the NameNode to any DataNode.
+
+namenode$ cat ~/.ssh/id_rsa.pub | ssh Datanode1 'cat >> ~/.ssh/authorized_keys'
+namenode$ cat ~/.ssh/id_rsa.pub | ssh Datanode2 'cat >> ~/.ssh/authorized_keys'
+namenode$ cat ~/.ssh/id_rsa.pub | ssh Datanode3 'cat >> ~/.ssh/authorized_keys'
+
+We can check this by trying to SSH into any of the DataNodes from the NameNode. You may still be prompted if you are sure you want to connect, but there should be no password requirement.
+
+namenode$ ssh ec2-user@datanode1_public_dns
+
+Now we have to install Java 1.8 in all the nodes:
+
+allnodes$ sudo yum update
+
+allnodes$ sudo yum install java-1.8.0
+
+allnodes$ sudo yum install sudo yum install java-1.8.0-openjdk-devel
+
+Remove Java version 7 by using the following command:
+
+allnodes$ sudo yum remove java-1.7.0
+
+allnodes$ sudo yum remove java-1.7.0-openjdk
+
+Now we install Hadoop Version 2.8 onto all the nodes by first saving the binary tar files to ~/Downloads and extracting it to the /usr/local folder.
+
+allnodes$ wget http://www-us.apache.org/dist/hadoop/common/hadoop-2.8.4/hadoop-2.8.4.tar.gz
+
+allnodes$ sudo tar -zxvf hadoop-2.8.4.tar.gz -C /opt
+
+Now we’ll need to add some Hadoop and Java environment variables to ~/.profile and source them to the current shell session.
+
+allnodes$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/hadoop-env.sh
+
+Find the line:
+
+export JAVA_HOME=$
+
+Replace it with:
+
+export JAVA_HOME=$(readlink -f /usr/bin/java | sed "s:bin/java::")
+
+You can add the path of the Hadoop program to the PATH environment variable for your convenience. We will echo to check whether the path is set properly.
+
+echo "export PATH=/opt/hadoop-2.8.4/bin:$PATH" | sudo tee -a /etc/profile
+
+source /etc/profile
+
+Next we will Run and test Hadoop:
+
+Prepare the data source and copy the xml files to the Hadoop Directory:
+
+mkdir ~/source
+
+cp /opt/hadoop-2.8.4/etc/hadoop/*.xml ~/source
+
+Use Hadoop along with grep to output the result:
+
+hadoop jar /opt/hadoop-2.8.4/share/hadoop/mapreduce/hadoop-mapreduce-examples-2.8.4.jar grep ~/source ~/output 'principal[.]*'
+
+Finally, you can view the content of the output files:
+
+cat ~/output/*
+
+The result should be:
+
+6       principal
+1       principal.
+
+Change ownership of the hadoop folder.
+
+allnodes$ sudo chown -R ec2-user:ec2-user /opt/hadoop-2.8.4/
+
+Edit the core-site.xml by using the following commands:
+
+allnodes$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/core-site.xml
+
+<configuration>
+<property>
+<name>fs.defaultFS</name>
+value>< value>hdfs://ec2-18-218-30-189.us-east-2.compute.amazonaws.com:9000</
+</property>
+</configuration>
+
+Edit the yarn-site.xml by using the following commands:
+
+allnodes$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/yarn-site.xml
+
+<configuration>
+<property>
+<name>yarn.nodemanager.aux-services</name>
+<value>mapreduce_shuffle</value>
+</property>
+<property>
+<name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+<value>org.apache.hadoop.mapred.ShuffleHandler</value>
+</property>
+<property>
+<name>yarn.resourcemanager.hostname</name>
+<value> ec2-18-218-30-189.us-east-2.compute.amazonaws.com </value>
+</property>
+</configuration>
+
+Edit the mapred-site.xml by creating a copy of the template and renaming it and adding the following lines:
+
+allnodes$ sudo cp /opt/hadoop-2.8.4/etc/hadoop/mapred-site.xml.template /opt/hadoop-2.8.4/etc/hadoop/mapred-site.xml
+
+allnodes$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/mapred-site.xml
+
+<configuration>
+<property>
+<name>mapreduce.jobtracker.address</name>
+<value> ec2-18-218-30-189.us-east-2.compute.amazonaws.com:54311</value>
+</property>
+<property>
+<name>mapreduce.framework.name</name>
+<value>yarn</value>
+</property>
+</configuration>
+
+NameNode Specific Configurations:
+
+Start with adding to the hosts file located under /etc/hosts. We will need to add each node’s public DNS and hostname to the list. The hostname can be found with the following command:
+
+allnodes$ echo $(hostname)
+
+Go to /etc/hosts and enter the following:
+
+namenode$ sudo vi /etc/hosts
+
+172.31.10.164 ec2-18-218-30-189.us-east-2.compute.amazonaws.com
+172.31.29.224 ec2-18-219-212-254.us-east-2.compute.amazonaws.com
+172.31.9.50 ec2-18-224-56-97.us-east-2.compute.amazonaws.com
+172.31.34.53 ec2-18-224-0-202.us-east-2.compute.amazonaws.com
+
+We have to modify the hdfs-site.xml in the location /opt/hadoop-2.8.4/etc/hadoop/ by the following lines:
+
+namenode$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/hdfs-site.xml
+
+<configuration>
+<property>
+<name>dfs.replication</name>
+<value>3</value>
+</property>
+<property>
+<name>dfs.namenode.name.dir</name>
+<value>file:///usr/local/hadoop/hadoop_data/hdfs/namenode</value>
+</property>
+</configuration>
+
+The current path where data on the NameNode will reside does not exist, so we’ll need to make this before starting HDFS.
+
+namenode$ sudo mkdir -p /opt/hadoop-2.8.4/hadoop_data/hdfs/namenode
+
+Next we’ll need to add a masters file to the Hadoop directory:
+
+namenode$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/masters
+
+Insert the NameNode’s hostname in that file:
+
+172.31.10.164
+
+Modify the Slaves file and insert the host names of data nodes 1, 2 & 3.
+
+namenode$ sudo vi /opt/hadoop-2.8.4/etc/hadoop/slaves
+
+172.31.29.224
+172.31.9.50
+172.31.34.53
+
+We will change the ownership of /opt/hadoop-2.8.4/ directory to user ec2-user:
+
+namenode$ sudo chown -R ec2-user:ec2-user /opt/hadoop-2.8.4/
+
+DataNode Configurations:
+
+1. Modify hdfs-site.xml in /opt/hadoop-2.8.4/etc/hadoop/ location:
+
+<configuration>
+<property>
+<name>dfs.replication</name>
+<value>3</value>
+</property>
+<property>
+<name>dfs.datanode.data.dir</name>
+<value>file:///usr/local/hadoop/hadoop_data/hdfs/datanode</value>
+</property>
+</configuration>
+
+We have to create a directory specified in the /opt/hadoop-2.8.4/etc/hadoop/hdfs-site.xml file:
+
+datanodes$ sudo mkdir -p /opt/hadoop-2.8.4/hadoop_data/hdfs/datanode
+
+Now that all configurations are set on the DataNode, we will change the ownership of the Hadoop Home directory to the ec2-user user.
+
+datanodes$ sudo chown -R ec2-user:ec2-user /opt/hadoop-2.8.4/
+
+Starting the Hadoop Cluster:
+
+We can start up HDFS from the Namenode by first formatting it and then starting HDFS.
+
+namenode$ hdfs namenode –format
+
+namenode$ /opt/hadoop-2.8.4/sbin/start-dfs.sh
+
+We can check the nodes which are online by visiting namenode_public_dns:50070 in the browser.
+
+Now start YARN as well as MapReduce JobHistory Server:
+
+namenode$ /opt/hadoop-2.8.4/sbin/start-yarn.sh
+namenode$ /opt/hadoop-2.8.4/sbin/mr-jobhistory-daemon.sh start historyserver
+
+We can also check the running Java processes by using the JPS Command on the DataNodes and the NameNode:
+
+namenode$ jps
+1872 ResourceManager
+31828 SecondaryNameNode
+31595 NameNode
+5325 Jps
+2173 JobHistoryServer
+
+datanode$ jps
+15409 NodeManager
+16646 Jps
+14695 DataNode
+
+Data Migration to HDFS:
+
+I pasted the input file(Alabama) file through WinSCP.
+
+Create a directory called /user in HDFS.
+
+namenode$ hdfs dfs -mkdir /user
+
+Copy the contents from /home/ec2-user/Alabama.txt to HDFS’s /user directory
+
+namenode$ hdfs dfs -put ‘/home/ec2-user/Alabama' /user/
+
+Command to run the program:
+
+namenode$ /opt/hadoop-2.8.4/bin/hadoop jar StateWordCount.jar com.code.statewordcount.StateWordCount /user/Alabama final
+
+namenode$ /opt/hadoop-2.8.4/bin/hadoop jar WordRank.jar com.code.wordrank.WordRank /user/Alabama final
+
+To check the output, use the command:
+
+namenode$ hadoop fs -cat /user/ec2-user/final/part-r-00000
